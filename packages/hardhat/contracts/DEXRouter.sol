@@ -36,13 +36,6 @@ contract DEXRouter {
         amounts = new uint256[](path.length);
         amounts[0] = amountIn;
 
-        // Transfer initial tokens from sender to first pair
-        IERC20(path[0]).transferFrom(
-            msg.sender,
-            factory.getPair(path[0], path[1]),
-            amountIn
-        );
-
         // Execute swaps along the path
         for (uint256 i = 0; i < path.length - 1; i++) {
             address pair = factory.getPair(path[i], path[i + 1]);
@@ -53,17 +46,23 @@ contract DEXRouter {
             // Get swap amount
             amounts[i + 1] = dex.getSwapAmount(path[i], amounts[i]);
 
-            // Determine recipient (next pair or final recipient)
-            address recipient = i < path.length - 2
-                ? factory.getPair(path[i + 1], path[i + 2])
-                : to;
+            // For first swap, transfer from msg.sender
+            // For subsequent swaps, approve the DEX to spend from this router
+            if (i == 0) {
+                // Transfer tokens from user to router, then approve DEX
+                IERC20(path[i]).transferFrom(msg.sender, address(this), amounts[i]);
+                IERC20(path[i]).approve(pair, amounts[i]);
+            } else {
+                // Approve DEX to spend the tokens this router received from previous swap
+                IERC20(path[i]).approve(pair, amounts[i]);
+            }
 
-            // Execute swap
-            dex.swap(path[i], amounts[i], 0); // minAmountOut checked at the end
-
-            // Transfer output to recipient
-            IERC20(path[i + 1]).transfer(recipient, amounts[i + 1]);
+            // Execute swap - DEX will transfer tokens to msg.sender (which is this router)
+            dex.swap(path[i], amounts[i]);
         }
+
+        // Transfer final tokens to recipient
+        IERC20(path[path.length - 1]).transfer(to, amounts[amounts.length - 1]);
 
         // Check final output meets minimum
         require(
